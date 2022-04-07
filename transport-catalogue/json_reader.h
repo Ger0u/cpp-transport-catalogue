@@ -24,13 +24,13 @@ svg::Color NodeToColor(const json::Node& node);
     
 std::vector<svg::Color> ArrayToVectorColor(const json::Array& arr);
     
-void CreateAndRequestsTransportCatalogue(std::istream& input, std::ostream& output);
+void CreateTransportCatalogueAndHandleRequests(std::istream& input, std::ostream& output);
     
 std::tuple<TransportCatalogue, std::vector<std::unique_ptr<svg::Drawable>>>
 CreateTransportCatalogue(const json::Array& base_requests,
                          const map_renderer::RenderSettings& render_settings);
     
-void RequestsTransportCatalogue(
+void HandleRequests(
     const TransportCatalogue& transport_catalogue,
     std::ostream& output,
     const json::Array& stat_requests,

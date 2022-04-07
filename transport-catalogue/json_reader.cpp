@@ -68,14 +68,14 @@ vector<svg::Color> ArrayToVectorColor(const json::Array& arr) {
     return result;
 }
     
-void CreateAndRequestsTransportCatalogue(istream& input, ostream& output) {
+void CreateTransportCatalogueAndHandleRequests(istream& input, ostream& output) {
     const auto document = json::Load(input);
     const auto& requests = document.GetRoot().AsMap();
     const auto render_settings =
         CreateRenderSettings(requests.at("render_settings"s).AsMap());
     auto [transport_catalogue, picture] = CreateTransportCatalogue(
         requests.at("base_requests"s).AsArray(), render_settings);
-    RequestsTransportCatalogue(
+    HandleRequests(
         transport_catalogue,
         output,
         requests.at("stat_requests"s).AsArray(),
@@ -116,7 +116,7 @@ CreateTransportCatalogue(const json::Array& base_requests,
     return {move(transport_catalogue), move(picture)};
 }
     
-void RequestsTransportCatalogue(
+void HandleRequests(
     const TransportCatalogue& transport_catalogue,
     std::ostream& output,
     const json::Array& stat_requests,

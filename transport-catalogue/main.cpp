@@ -2,5 +2,5 @@
 #include <iostream>
 
 int main() {
-    transport::json_reader::CreateAndRequestsTransportCatalogue(std::cin, std::cout);
+    transport::json_reader::CreateTransportCatalogueAndHandleRequests(std::cin, std::cout);
 }
