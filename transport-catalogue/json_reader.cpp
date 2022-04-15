@@ -1,4 +1,5 @@
 #include "json_reader.h"
+#include "json_builder.h"
 #include <cassert>
 #include <algorithm>
 #include <sstream>
@@ -70,9 +71,9 @@ vector<svg::Color> ArrayToVectorColor(const json::Array& arr) {
     
 void CreateTransportCatalogueAndHandleRequests(istream& input, ostream& output) {
     const auto document = json::Load(input);
-    const auto& requests = document.GetRoot().AsMap();
+    const auto& requests = document.GetRoot().AsDict();
     const auto render_settings =
-        CreateRenderSettings(requests.at("render_settings"s).AsMap());
+        CreateRenderSettings(requests.at("render_settings"s).AsDict());
     auto [transport_catalogue, picture] = CreateTransportCatalogue(
         requests.at("base_requests"s).AsArray(), render_settings);
     HandleRequests(
@@ -89,7 +90,7 @@ CreateTransportCatalogue(const json::Array& base_requests,
     vector<const json::Dict*> node_stops;
     vector<const json::Dict*> node_buses;
     for (const json::Node& node_request : base_requests) {
-        const json::Dict& request = node_request.AsMap();
+        const json::Dict& request = node_request.AsDict();
         string_view type = request.at("type"s).AsString();
         if (type == "Stop"sv) {
             node_stops.push_back(&request);
@@ -122,35 +123,75 @@ void HandleRequests(
     const json::Array& stat_requests,
     const vector<unique_ptr<svg::Drawable>>& picture)
 {
-    json::Array responses;
+    json::Builder responses;
+    auto response = responses.StartArray();
     for (const json::Node& node_stat_request : stat_requests) {
-        const json::Dict& stat_request = node_stat_request.AsMap();
+        const json::Dict& stat_request = node_stat_request.AsDict();
         int id = stat_request.at("id"s).AsInt();
         string_view type = stat_request.at("type"s).AsString();
-        json::Dict response;
-        response.insert({"request_id"s, id});
+        
         if (type == "Stop"sv) {
             string_view name = stat_request.at("name"s).AsString();
             const domain::Stop* stop = transport_catalogue.FindStop(name);
+            
             if (!stop) {
-                response.insert({"error_message"s, "not found"s});
+                response = response.Value(
+                    json::Builder{}
+                    .StartDict()
+                        .Key("request_id"s).Value(id)
+                        .Key("error_message"s).Value("not found"s)
+                    .EndDict()
+                    .Build()
+                    .AsDict()
+                );
             } else {
-                json::Array buses_names;
+                json::Builder buses_names;
+                auto buse_name = buses_names.StartArray();
                 for (const domain::Bus* bus : stop->GetBuses()) {
-                    buses_names.push_back(string(bus->GetName()));
+                    buse_name = buse_name.Value(string(bus->GetName()));
                 }
-                response.insert({"buses", move(buses_names)});
+                response = response.Value(
+                    json::Builder{}
+                    .StartDict()
+                        .Key("request_id"s).Value(id)
+                        .Key("buses"s).Value(buse_name.EndArray().Build().AsArray())
+                    .EndDict()
+                    .Build()
+                    .AsDict()
+                );
             }
         } else if (type == "Bus"sv) {
             string_view name = stat_request.at("name"s).AsString();
             const domain::Bus* bus = transport_catalogue.FindBus(name);
+            
             if (!bus) {
-                response.insert({"error_message"s, "not found"s});
+                response = response.Value(
+                    json::Builder{}
+                    .StartDict()
+                        .Key("request_id"s).Value(id)
+                        .Key("error_message"s).Value("not found"s)
+                    .EndDict()
+                    .Build()
+                    .AsDict()
+                );
             } else {
-                response.insert({"curvature"s, bus->GetLength() / bus->GetIdealLength()});
-                response.insert({"route_length"s, (double)bus->GetLength()});
-                response.insert({"stop_count"s, (int)bus->GetCountStops()});
-                response.insert({"unique_stop_count"s, (int)bus->GetCountUniqueStops()});
+                response = response.Value(
+                    json::Builder{}
+                    .StartDict()
+                        .Key("request_id"s)
+                            .Value(id)
+                        .Key("curvature"s)
+                            .Value(bus->GetLength() / bus->GetIdealLength())
+                        .Key("route_length"s)
+                            .Value((double)bus->GetLength())
+                        .Key("stop_count"s)
+                            .Value((int)bus->GetCountStops())
+                        .Key("unique_stop_count"s)
+                            .Value((int)bus->GetCountUniqueStops())
+                    .EndDict()
+                    .Build()
+                    .AsDict()
+                );
             }
         } else if (type == "Map"sv) {
             svg::Document doc;
@@ -159,11 +200,18 @@ void HandleRequests(
             }
             stringstream buf;
             doc.Render(buf);
-            response.insert({"map"s, buf.str()});
+            response = response.Value(
+                json::Builder{}
+                .StartDict()
+                    .Key("request_id"s).Value(id)
+                    .Key("map"s).Value(buf.str())
+                .EndDict()
+                .Build()
+                .AsDict()
+            );
         }
-        responses.push_back(move(response));
     }
-    json::Print(responses, output);
+    json::Print(json::Document(response.EndArray().Build()), output);
 }
     
 unordered_map<string_view, const domain::Stop*> CreateStops(
@@ -188,7 +236,7 @@ void SetDistanceBetweenStops(
     for (const json::Dict* node_stop : node_stops) {
         string_view name_first_stop = node_stop->at("name"s).AsString();
         for (const auto& [name_second_stop, node_distance] :
-            node_stop->at("road_distances"s).AsMap())
+            node_stop->at("road_distances"s).AsDict())
         {
             transport_catalogue.SetDistanceBetweenStops(
                 name_first_stop,
