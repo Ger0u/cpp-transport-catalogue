@@ -1,6 +1,9 @@
 #pragma once
 
 #include "transport_catalogue.h"
+#include "transport_router.h"
+#include "graph.h"
+#include "router.h"
 #include "map_renderer.h"
 #include "json.h"
 #include "svg.h"
@@ -18,6 +21,8 @@ namespace json_reader {
     
 map_renderer::RenderSettings CreateRenderSettings(const json::Dict& render_settings);
     
+transport_router::RoutingSettings CreateRoutingSettings(const json::Dict& routing_settings);
+    
 svg::Point ArrayToPoint(const json::Array& arr);
     
 svg::Color NodeToColor(const json::Node& node);
@@ -26,15 +31,26 @@ std::vector<svg::Color> ArrayToVectorColor(const json::Array& arr);
     
 void CreateTransportCatalogueAndHandleRequests(std::istream& input, std::ostream& output);
     
-std::tuple<TransportCatalogue, std::vector<std::unique_ptr<svg::Drawable>>>
+std::tuple<TransportCatalogue,
+           std::unordered_map<std::string_view, const domain::Stop*>,
+           std::map<std::string_view, const domain::Stop*>,
+           std::map<std::string_view, const domain::Bus*>>
+CreateStopsAndBuses(const json::Array& base_requests);
+    
+std::tuple<TransportCatalogue, std::vector<std::unique_ptr<svg::Drawable>>,
+           graph::DirectedWeightedGraph<double>,
+           transport_router::TransportRoutes>
 CreateTransportCatalogue(const json::Array& base_requests,
-                         const map_renderer::RenderSettings& render_settings);
+                         const map_renderer::RenderSettings& render_settings,
+                         const transport_router::RoutingSettings& routing_settings);
     
 void HandleRequests(
     const TransportCatalogue& transport_catalogue,
     std::ostream& output,
     const json::Array& stat_requests,
-    const std::vector<std::unique_ptr<svg::Drawable>>& picture);
+    const std::vector<std::unique_ptr<svg::Drawable>>& picture,
+    const graph::DirectedWeightedGraph<double>& transport_graph,
+    const transport_router::TransportRoutes& transport_routes);
     
 std::unordered_map<std::string_view, const domain::Stop*> CreateStops(
     TransportCatalogue& transport_catalogue,
@@ -84,6 +100,33 @@ void CreateNamesOfStops(
     std::vector<std::unique_ptr<svg::Drawable>>& picture,
     const std::map<std::string_view, svg::Point> stops_points,
     const map_renderer::RenderSettings& render_settings);
+    
+template<typename InputIt>
+void FillingInObjectsForTransportRoutes(
+    InputIt first, InputIt last,
+    std::string_view bus_name,
+    const transport_router::RoutingSettings& routing_settings,
+    const std::unordered_map<std::string_view, graph::VertexId>& vertex_id_by_stop_name,
+    graph::DirectedWeightedGraph<double>& transport_graph,
+    std::vector<transport_router::TransportRoutes::BusData>& bus_data_by_edge_id)
+{
+    for (auto stop1 = first; stop1 != last - 1; ++stop1) {
+        double time = routing_settings.bus_wait_time;
+        for (auto stop2 = stop1 + 1; stop2 != last && *stop1 != *stop2; ++stop2) {
+            auto it = (*(stop2 - 1))->GetDistances().find((*stop2)->GetName());
+            if (it == (*(stop2 - 1))->GetDistances().end()) {
+                it = (*stop2)->GetDistances().find((*(stop2 - 1))->GetName());
+            }
+            time += it->second / (routing_settings.bus_velocity * 1000.0 / 60);
+            transport_graph.AddEdge({
+                vertex_id_by_stop_name.at((*stop1)->GetName()),
+                vertex_id_by_stop_name.at((*stop2)->GetName()),
+                time
+            });
+            bus_data_by_edge_id.push_back({bus_name, (size_t)(stop2 - stop1)});
+        }
+    }
+}
     
 } //namespace json_reader
     

@@ -1,5 +1,6 @@
 #include "json_reader.h"
 #include "json_builder.h"
+#include "graph.h"
 #include <cassert>
 #include <algorithm>
 #include <sstream>
@@ -31,6 +32,15 @@ map_renderer::RenderSettings CreateRenderSettings(
         render_settings.at("underlayer_width"s).AsDouble(),
         
         ArrayToVectorColor(render_settings.at("color_palette"s).AsArray())
+    };
+}
+    
+transport_router::RoutingSettings CreateRoutingSettings(
+    const json::Dict& routing_settings)
+{
+    return {
+        routing_settings.at("bus_wait_time"s).AsInt(),
+        routing_settings.at("bus_velocity"s).AsDouble()
     };
 }
     
@@ -74,19 +84,23 @@ void CreateTransportCatalogueAndHandleRequests(istream& input, ostream& output) 
     const auto& requests = document.GetRoot().AsDict();
     const auto render_settings =
         CreateRenderSettings(requests.at("render_settings"s).AsDict());
-    auto [transport_catalogue, picture] = CreateTransportCatalogue(
-        requests.at("base_requests"s).AsArray(), render_settings);
+    const auto routing_settings =
+        CreateRoutingSettings(requests.at("routing_settings"s).AsDict());
+    auto [transport_catalogue, picture, transport_graph, transport_routes] = CreateTransportCatalogue(
+        requests.at("base_requests"s).AsArray(), render_settings, routing_settings);
     HandleRequests(
         transport_catalogue,
         output,
         requests.at("stat_requests"s).AsArray(),
-        picture);
+        picture,
+        transport_graph,
+        transport_routes
+    );
 }
-    
-tuple<TransportCatalogue, vector<unique_ptr<svg::Drawable>>>
-CreateTransportCatalogue(const json::Array& base_requests,
-                         const map_renderer::RenderSettings& render_settings)
-{
+ 
+tuple<TransportCatalogue, unordered_map<string_view, const domain::Stop*>,
+      map<string_view, const domain::Stop*>, map<string_view, const domain::Bus*>>
+CreateStopsAndBuses(const json::Array& base_requests) {
     vector<const json::Dict*> node_stops;
     vector<const json::Dict*> node_buses;
     for (const json::Node& node_request : base_requests) {
@@ -102,6 +116,18 @@ CreateTransportCatalogue(const json::Array& base_requests,
     auto all_stops = CreateStops(transport_catalogue, node_stops);
     SetDistanceBetweenStops(transport_catalogue, node_stops);
     auto [stops, buses] = CreateBuses(transport_catalogue, node_buses, all_stops);
+    return {move(transport_catalogue), move(all_stops),
+            move(stops), move(buses)};
+}
+
+tuple<TransportCatalogue, vector<unique_ptr<svg::Drawable>>,
+      graph::DirectedWeightedGraph<double>,
+      transport_router::TransportRoutes>
+CreateTransportCatalogue(const json::Array& base_requests,
+                         const map_renderer::RenderSettings& render_settings,
+                         const transport_router::RoutingSettings& routing_settings)
+{
+    auto [transport_catalogue, all_stops, stops, buses] = CreateStopsAndBuses(base_requests);
     auto [min_lon, max_lon, min_lat, max_lat] = FindExtremeCoordinates(stops);
     map_renderer::ScalingPoints scaling_points(
         render_settings.width,
@@ -114,22 +140,63 @@ CreateTransportCatalogue(const json::Array& base_requests,
     );
     auto stops_points = ScaleStopPoints(stops, scaling_points);
     auto picture = CreateMapObjects(stops_points, buses, render_settings);
-    return {move(transport_catalogue), move(picture)};
+    graph::DirectedWeightedGraph<double> transport_graph(all_stops.size());
+    vector<string_view> stop_name_by_vertex_id(all_stops.size());
+    unordered_map<string_view, graph::VertexId> vertex_id_by_stop_name;
+    {
+        graph::VertexId i = 0;
+        for (const auto& [name, _] : all_stops) {
+            vertex_id_by_stop_name.emplace(name, i);
+            stop_name_by_vertex_id[i] = name;
+            ++i;
+        }
+    }
+    vector<transport_router::TransportRoutes::BusData> bus_data_by_edge_id;
+    for (const auto [name, bus] : buses) {
+        FillingInObjectsForTransportRoutes(
+            bus->GetStops().begin(), bus->GetStops().end(),
+            name,
+            routing_settings,
+            vertex_id_by_stop_name,
+            transport_graph,
+            bus_data_by_edge_id
+        );
+        if (!bus->GetRing()) {
+            FillingInObjectsForTransportRoutes(
+                bus->GetStops().rbegin(), bus->GetStops().rend(),
+                name,
+                routing_settings,
+                vertex_id_by_stop_name,
+                transport_graph,
+                bus_data_by_edge_id
+            );
+        }
+    }
+    return {move(transport_catalogue), move(picture), move(transport_graph),
+            transport_router::TransportRoutes(
+                routing_settings,
+                move(bus_data_by_edge_id),
+                move(stop_name_by_vertex_id),
+                move(vertex_id_by_stop_name)
+            )};
 }
     
 void HandleRequests(
     const TransportCatalogue& transport_catalogue,
     std::ostream& output,
     const json::Array& stat_requests,
-    const vector<unique_ptr<svg::Drawable>>& picture)
+    const vector<unique_ptr<svg::Drawable>>& picture,
+    const graph::DirectedWeightedGraph<double>& transport_graph,
+    const transport_router::TransportRoutes& transport_routes)
 {
+    const graph::Router router(transport_graph);
     json::Builder responses;
     auto response = responses.StartArray();
     for (const json::Node& node_stat_request : stat_requests) {
         const json::Dict& stat_request = node_stat_request.AsDict();
         int id = stat_request.at("id"s).AsInt();
         string_view type = stat_request.at("type"s).AsString();
-        
+
         if (type == "Stop"sv) {
             string_view name = stat_request.at("name"s).AsString();
             const domain::Stop* stop = transport_catalogue.FindStop(name);
@@ -209,6 +276,64 @@ void HandleRequests(
                 .Build()
                 .AsDict()
             );
+        } else if (type == "Route"sv) {
+            string_view from = stat_request.at("from"s).AsString();
+            string_view to = stat_request.at("to"s).AsString();
+            const auto route = router.BuildRoute(
+                transport_routes.GetVertexId(from),
+                transport_routes.GetVertexId(to));
+            
+            if (!route) {
+                response = response.Value(
+                    json::Builder{}
+                    .StartDict()
+                        .Key("request_id"s).Value(id)
+                        .Key("error_message"s).Value("not found"s)
+                    .EndDict()
+                    .Build()
+                    .AsDict()
+                );
+            } else {
+                json::Builder items;
+                auto item = items.StartArray();
+                for (size_t i : route.value().edges) {
+                    const auto& edge = transport_graph.GetEdge(i);
+                    const auto bus_data = transport_routes.GetBusData(i);
+                    item = item
+                        .Value(
+                            json::Builder{}
+                            .StartDict()
+                                .Key("type"s).Value("Wait")
+                                .Key("stop_name"s).Value(string(transport_routes.GetStopName(edge.from)))
+                                .Key("time"s).Value(transport_routes.GetRoutingSettings().bus_wait_time)
+                            .EndDict()
+                            .Build()
+                            .AsDict())
+                        .Value(
+                            json::Builder{}
+                            .StartDict()
+                                .Key("type"s).Value("Bus"s)
+                                .Key("bus"s).Value(string(bus_data.name))
+                                .Key("span_count"s).Value((int)bus_data.span_count)
+                                .Key("time"s).Value(
+                                    edge.weight -
+                                    transport_routes.GetRoutingSettings().bus_wait_time)
+                            .EndDict()
+                            .Build()
+                            .AsDict());
+                }
+                items = item.EndArray();
+                response = response.Value(
+                    json::Builder{}
+                    .StartDict()
+                        .Key("request_id"s).Value(id)
+                        .Key("total_time"s).Value(route.value().weight)
+                        .Key("items"s).Value(items.Build().AsArray())
+                    .EndDict()
+                    .Build()
+                    .AsDict()
+                );
+            }
         }
     }
     json::Print(json::Document(response.EndArray().Build()), output);
