@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package proto;
+
+message Edge {
+    uint64 from = 1;
+    uint64 to = 2;
+    double weight = 3;
+}
+
+message IncidenceList {
+    repeated uint64 incidence = 1;
+}
+
+message DirectedWeightedGraph {
+    repeated Edge edge = 1;
+    repeated IncidenceList incidence_list = 2;
+}

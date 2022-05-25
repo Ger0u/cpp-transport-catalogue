@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+import "svg.proto";
+import "transport_catalogue.proto";
+import "graph.proto";
+import "transport_router.proto";
+
+package proto;
+
+message PolylineOfRoute {
+    repeated Point stop = 1;
+    double line_width = 2;
+    Color color = 3;
+}
+
+message NameOfRoute {
+    bytes name = 1;
+    Point pos = 2;
+    int32 label_font_size = 3;
+    Point label_offset = 4;
+    Color underlayer_color = 5;
+    double underlayer_width = 6;
+    Color fill_color = 7;
+}
+
+message CircleOfStop {
+    Point center = 1;
+    double radius = 2;
+}
+
+message NameOfStop {
+    bytes name = 1;
+    Point pos = 2;
+    int32 label_font_size = 3;
+    Point label_offset = 4;
+    Color underlayer_color = 5;
+    double underlayer_width = 6;
+}
+
+message Drawable {
+    oneof drawable {
+        PolylineOfRoute polyline_of_route = 1;
+        NameOfRoute name_of_route = 2;
+        CircleOfStop circle_of_stop = 3;
+        NameOfStop name_of_stop = 4;
+    }
+}
+
+message Drawables {
+    repeated Drawable drawable = 1;
+}
+
+message Data {
+    TransportCatalogue transport_catalogue = 1;
+    Drawables drawables = 2;
+    DirectedWeightedGraph transport_graph = 3;
+    TransportRoutes transport_routes = 4;
+}

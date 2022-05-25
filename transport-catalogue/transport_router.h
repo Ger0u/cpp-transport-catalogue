@@ -1,8 +1,8 @@
 #pragma once
 #include "graph.h"
+#include <transport_router.pb.h>
 #include <vector>
 #include <unordered_map>
-#include <string_view>
 
 namespace transport_router {
 
@@ -14,28 +14,33 @@ struct RoutingSettings {
 class TransportRoutes {
 public:
     struct BusData {
-        std::string_view name;
+        size_t index;
         size_t span_count;
     };
 
+    TransportRoutes() = default;
+    
     TransportRoutes(RoutingSettings routing_settings,
                     std::vector<BusData> bus_data_by_edge_id,
-                    std::vector<std::string_view> stop_name_by_vertex_id,
-                    std::unordered_map<std::string_view, graph::VertexId> vertex_id_by_stop_name);
+                    std::vector<size_t> stop_index_by_vertex_id,
+                    std::unordered_map<size_t, graph::VertexId> vertex_id_by_stop_index);
 
     const RoutingSettings& GetRoutingSettings() const;
     
     const BusData& GetBusData(graph::EdgeId edge_id) const;
     
-    std::string_view GetStopName(graph::VertexId vetex_id) const;
+    size_t GetStopIndex(graph::VertexId vetex_id) const;
     
-    graph::VertexId GetVertexId(std::string_view stop_name) const;
+    graph::VertexId GetVertexId(size_t stop_index) const;
+
+    proto::TransportRoutes OutProto() const;
+    void InProto(const proto::TransportRoutes& proto_transport_routes);
     
 private:
     RoutingSettings routing_settings_;
     std::vector<BusData> bus_data_by_edge_id_;
-    std::vector<std::string_view> stop_name_by_vertex_id_;
-    std::unordered_map<std::string_view, graph::VertexId> vertex_id_by_stop_name_;
+    std::vector<size_t> stop_index_by_vertex_id_;
+    std::unordered_map<size_t, graph::VertexId> vertex_id_by_stop_index_;
 };
     
 } //namespace transport_router

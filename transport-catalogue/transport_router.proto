@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package proto;
+
+message RoutingSettings {
+    int32 bus_wait_time = 1;
+    double bus_velocity = 2;
+}
+
+message BusData {
+    uint64 index = 1;
+    uint64 span_count = 2;
+}
+
+message VertexIdByStopIndex {
+    uint64 index = 1;
+    uint64 vertex_id = 2;
+}
+
+message TransportRoutes {
+    RoutingSettings routing_settings = 1;
+    repeated BusData bus_data_by_edge_id = 2;
+    repeated uint64 stop_index_by_vertex_id = 3;
+    repeated VertexIdByStopIndex vertex_id_by_stop_index = 4;
+}

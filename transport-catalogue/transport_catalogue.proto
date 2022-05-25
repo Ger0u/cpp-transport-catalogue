@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package proto;
+
+message Coordinates {
+    double lat = 1;
+    double lng = 2;
+}
+
+message DistanceToStop {
+    uint64 stop_index = 1;
+    int32 distance = 2;
+}
+
+message Stop {
+    bytes name = 1;
+    Coordinates coordinates = 2;
+    repeated DistanceToStop distance_to_stop = 3;
+
+    repeated uint64 bus_index = 4;
+}
+
+message Bus {
+    bytes name = 1;
+    repeated uint64 stop_index = 2;
+    bool ring = 3;
+
+    int32 length = 4;
+    double ideal_length = 5;
+    uint64 count_stops = 6;
+    uint64 count_unique_stops = 7;
+}
+
+message TransportCatalogue {
+    repeated Bus bus = 1;
+    repeated Stop stop = 2;
+}
